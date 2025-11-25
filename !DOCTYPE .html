@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>胸痛中心全流程考核 (智能随机版 v8.0)</title>
+    <style>
+        :root { --primary: #0056b3; --bg: #f4f7f6; --text: #333; }
+        body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background-color: var(--bg); color: var(--text); margin: 0; padding: 20px; }
+        .container { max-width: 950px; margin: 0 auto; display: grid; grid-template-columns: 260px 1fr; gap: 20px; }
+        
+        /* 侧边栏 */
+        .emr-sidebar { background: white; padding: 20px; border-radius: 8px; border-top: 5px solid var(--primary); height: fit-content; }
+        .patient-header { border-bottom: 2px solid #eee; padding-bottom: 10px; margin-bottom: 10px; }
+        .avatar { width: 60px; height: 60px; border-radius: 50%; float: right; border: 2px solid #ddd; }
+        .log-list { font-size: 0.85em; color: #666; max-height: 400px; overflow-y: auto; }
+        .log-entry { border-bottom: 1px dashed #eee; padding: 6px 0; }
+
+        /* 主舞台 */
+        .main-stage { background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
+        .scenario-box { background: #f8f9fa; padding: 20px; border-radius: 6px; border-left: 5px solid #17a2b8; margin: 20px 0; }
+        
+        /* 图片区 */
+        .media-box { text-align: center; margin: 15px 0; background: #000; padding: 10px; border-radius: 4px; display: none; }
+        .media-img { max-width: 100%; max-height: 350px; border: 1px solid #444; }
+
+        /* 输入区 */
+        .action-area textarea { width: 100%; height: 80px; padding: 10px; border: 2px solid #dfe3e6; border-radius: 4px; font-size: 1em; }
+        button { background: var(--primary); color: white; border: none; padding: 12px 30px; border-radius: 4px; cursor: pointer; margin-top: 10px; }
+        button:hover { background: #004494; }
+        .btn-next { background: #28a745; display: none; }
+
+        /* 反馈区 */
+        .feedback-box { margin-top: 20px; padding: 15px; background: #e8f0fe; border-radius: 6px; display: none; animation: fadeIn 0.4s; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="emr-sidebar">
+        <div class="patient-header">
+            <img id="pAvatar" class="avatar" src="" alt="avatar">
+            <h3 style="margin:0 0 5px 0;">电子病历</h3>
+            <div id="pInfo" style="font-size:0.9em; line-height:1.5;"></div>
+        </div>
+        <div style="font-weight:bold; color:#0056b3; margin-bottom:10px;">📄 诊疗日志</div>
+        <div id="logList" class="log-list"></div>
+        <div style="margin-top:20px; font-weight:bold; color:#d9534f; font-size:1.2em;">得分: <span id="scoreVal">0</span></div>
+    </div>
+
+    <div class="main-stage">
+        <div style="color:#888; font-size:0.9em;">流程节点: <span id="stepNum">1</span> / 8</div>
+        <h2 id="stepTitle">...</h2>
+        
+        <div id="scenarioBox" class="scenario-box">...</div>
+
+        <div id="mediaBox" class="media-box">
+            <img id="mediaImg" class="media-img" src="">
+            <div style="color:#0f0; font-family:monospace; margin-top:5px;">[PACS System Image]</div>
+        </div>
+
+        <div class="action-area">
+            <label id="questionLabel" style="font-weight:bold; display:block; margin-bottom:8px;"></label>
+            <textarea id="answerInput" placeholder="请输入医嘱..."></textarea>
+            <button id="submitBtn" onclick="submitStep()">提交医嘱</button>
+            <button id="nextBtn" class="btn-next" onclick="nextStep()">进入下一环节 ➡</button>
+        </div>
+
+        <div id="feedbackArea" class="feedback-box"></div>
+    </div>
+</div>
+
+<script>
+    // --- 1. 病例生成工厂 (Random Case Factory) ---
+    const caseTemplates = [
+        {
+            type: "Anterior_STEMI", // 前壁心梗
+            name: "王建国", age: 58, gender: "男",
+            avatar: "https://ui-avatars.com/api/?name=Wang+JG&background=0D8ABC&color=fff",
+            history: "高血压10年，吸烟史。",
+            vitals: { bp: "150/90", hr: "105" },
+            ecgImg: "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e3/Anterior_STEMI_on_ECG.png/800px-Anterior_STEMI_on_ECG.png",
+            ecgDiagnosis: "广泛前壁心肌梗死",
+            ecgKeywords: ["前壁", "V1", "V2", "V3", "抬高"],
+            nitroSafe: true, // 可以用硝酸甘油
+            PCI_Strategy: "直接PCI"
+        },
+        {
+            type: "Inferior_STEMI", // 下壁心梗 (陷阱题)
+            name: "张淑芬", age: 65, gender: "女",
+            avatar: "https://ui-avatars.com/api/?name=Zhang+SF&background=d63384&color=fff",
+            history: "糖尿病5年。",
+            vitals: { bp: "95/60", hr: "55" }, // 血压偏低
+            ecgImg: "https://upload.wikimedia.org/wikipedia/commons/thumb/8/80/12_Lead_ECG_showing_Inferior_STEMI.jpg/800px-12_Lead_ECG_showing_Inferior_STEMI.jpg",
+            ecgDiagnosis: "下壁心肌梗死",
+            ecgKeywords: ["下壁", "II", "III", "aVF", "抬高"],
+            nitroSafe: false, // ❌ 禁用硝酸甘油 (因为涉及右室/低血压)
+            PCI_Strategy: "直接PCI"
+        }
+    ];
+
+    let currentCase = {};
+    let steps = []; // 动态生成的步骤数组
+    let currentStepIdx = 0;
+    let totalScore = 0;
+
+    // --- 2. 初始化逻辑 ---
+    function initGame() {
+        // 随机抽取一个病人
+        const randIdx = Math.floor(Math.random() * caseTemplates.length);
+        currentCase = caseTemplates[randIdx];
+
+        // 渲染侧边栏
+        document.getElementById('pAvatar').src = currentCase.avatar;
+        document.getElementById('pInfo').innerHTML = `
+            <strong>${currentCase.name}</strong> (${currentCase.gender}, ${currentCase.age}岁)<br>
+            既往史: ${currentCase.history}
+        `;
+
+        // 动态构建 8 步剧本 (根据抽取到的病人填空)
+        buildSteps();
+        
+        // 渲染第一步
+        renderStep();
+        addLog(`患者 ${currentCase.name} 到达急诊。`);
+    }
+
+    function buildSteps() {
+        // 这里是根据 randomCase 动态生成的剧本
+        steps = [
+            {
+                title: "1. 快速接诊",
+                text: `患者主诉胸骨后剧烈疼痛2小时。查体：BP ${currentCase.vitals.bp}, HR ${currentCase.vitals.hr}。神志清。`,
+                question: "请下达『黄金10分钟』内必须完成的首要医嘱：",
+                keywords: ["心电图", "ECG", "吸氧", "通道"],
+                media: null,
+                feedback: "✅ <strong>解析：</strong> 无论什么类型的胸痛，10分钟内完成心电图是铁律。"
+            },
+            {
+                title: "2. 心电图判读",
+                text: "护士已完成心电图（见下图）。",
+                question: "请仔细观察心电图，写出您的定位诊断：",
+                keywords: currentCase.ecgKeywords, // 动态关键词
+                media: currentCase.ecgImg, // 动态图片
+                feedback: `✅ <strong>解析：</strong> 图中可见 ${currentCase.ecgKeywords.join('/')} 导联ST段抬高，诊断为：${currentCase.ecgDiagnosis}。`
+            },
+            {
+                title: "3. 负荷给药",
+                text: `确诊为 ${currentCase.ecgDiagnosis}。准备行急诊PCI。`,
+                question: "请下达『双抗』负荷剂量医嘱：",
+                keywords: ["阿司匹林", "300", "替格瑞洛", "180", "氯吡格雷"],
+                media: null,
+                feedback: "✅ <strong>解析：</strong> 负荷量：阿司匹林300mg + 替格瑞洛180mg (或氯吡格雷300-600mg)。"
+            },
+            {
+                title: "4. 禁忌症排查",
+                text: "在给药前，除了询问出血史，考虑到患者胸痛剧烈，还需简单听诊心脏并测量双上肢血压。",
+                question: "这一步是为了排除哪种致死性疾病？",
+                keywords: ["夹层", "撕裂", "主动脉"],
+                media: null,
+                feedback: "✅ <strong>解析：</strong> 必须排除主动脉夹层，否则抗栓治疗是致命的。"
+            },
+            {
+                title: "5. 症状控制 (陷阱题)",
+                text: `患者仍诉胸痛。当前血压 ${currentCase.vitals.bp}。`,
+                question: "是否给予硝酸甘油（含服或泵入）？请说明理由。",
+                keywords: [], // 特殊逻辑判断
+                media: null,
+                // 这里 feedback 只是默认值，实际逻辑在 submitStep 里动态判断
+                feedback: "" 
+            },
+            {
+                title: "6. 再灌注策略",
+                text: "症状稍缓解。导管室已激活。预计 D2B < 60min。",
+                question: "首选治疗策略是什么？",
+                keywords: ["PCI", "介入", "造影"],
+                media: null,
+                feedback: "✅ <strong>解析：</strong> 对于有PCI能力的医院，首选直接PCI。"
+            },
+            {
+                title: "7. 知情同意",
+                text: "家属对手术有顾虑，还在打电话商量。",
+                question: "为确保 D2B 达标，你该如何沟通？",
+                keywords: ["生命", "时间", "坏死", "签字"],
+                media: null,
+                feedback: "✅ <strong>解析：</strong> 强调病情危重性和时间紧迫性，争取立即签字。"
+            },
+            {
+                title: "8. 二级预防",
+                text: "手术顺利，安返病房。",
+                question: "出院后需长期服用哪些药物（列举3类）？",
+                keywords: ["他汀", "β", "倍他", "ACEI", "ARB", "双抗"],
+                media: null,
+                feedback: "✅ <strong>解析：</strong> 冠心病二级预防 ABCDE 方案。"
+            }
+        ];
+    }
+
+    // --- 3. 交互逻辑 ---
+    function renderStep() {
+        const step = steps[currentStepIdx];
+        document.getElementById('stepNum').innerText = currentStepIdx + 1;
+        document.getElementById('stepTitle').innerText = step.title;
+        document.getElementById('scenarioBox').innerHTML = step.text;
+        document.getElementById('questionLabel').innerText = step.question;
+        document.getElementById('answerInput').value = "";
+        
+        const mBox = document.getElementById('mediaBox');
+        if (step.media) {
+            document.getElementById('mediaImg').src = step.media;
+            mBox.style.display = 'block';
+        } else {
+            mBox.style.display = 'none';
+        }
+
+        document.getElementById('feedbackArea').style.display = 'none';
+        document.getElementById('submitBtn').style.display = 'inline-block';
+        document.getElementById('nextBtn').style.display = 'none';
+    }
+
+    function submitStep() {
+        const input = document.getElementById('answerInput').value;
+        if(!input) { alert("请输入医嘱！"); return; }
+        
+        const step = steps[currentStepIdx];
+        const fbArea = document.getElementById('feedbackArea');
+        let score = 0;
+        let fbText = "";
+
+        // 特殊处理第 5 步 (硝酸甘油陷阱)
+        if (currentStepIdx === 4) {
+            const hasNitro = ["硝酸甘油", "消心痛", "硝酸酯"].some(k => input.includes(k));
+            if (currentCase.nitroSafe) {
+                // 前壁心梗：可以用
+                if (hasNitro) { score = 12.5; fbText = "✅ 正确。血压耐受，给予硝酸甘油可缓解缺血。"; }
+                else { score = 5; fbText = "⚠️ 此时可以用硝酸甘油，你未提及。"; }
+            } else {
+                // 下壁心梗 (低血压)：绝对禁用！
+                if (hasNitro) { score = 0; fbText = "❌ <strong>错误！</strong> 下壁心梗常合并右室梗死，且患者血压偏低，硝酸甘油会导致休克！"; }
+                else { score = 12.5; fbText = "✅ 正确。你避开了陷阱！患者低血压/下壁心梗，禁用硝酸甘油。"; }
+            }
+        } else {
+            // 常规关键词匹配
+            const hit = step.keywords.some(k => input.toLowerCase().includes(k.toLowerCase()));
+            if (hit) {
+                score = 12.5;
+                fbText = step.feedback;
+            } else {
+                fbText = "❌ 关键点遗漏。<br>" + step.feedback;
+            }
+        }
+
+        totalScore += score;
+        document.getElementById('scoreVal').innerText = totalScore;
+        
+        fbArea.innerHTML = fbText;
+        fbArea.style.display = 'block';
+        addLog(`Step ${currentStepIdx+1}: 完成。得分 ${score}`);
+
+        document.getElementById('submitBtn').style.display = 'none';
+        document.getElementById('nextBtn').style.display = 'inline-block';
+    }
+
+    function nextStep() {
+        if (currentStepIdx < steps.length - 1) {
+            currentStepIdx++;
+            renderStep();
+        } else {
+            alert(`考核结束！最终得分：${totalScore}`);
+            location.reload(); // 刷新开始新病例
+        }
+    }
+
+    function addLog(msg) {
+        const div = document.createElement('div');
+        div.className = 'log-entry';
+        div.innerText = new Date().toLocaleTimeString('en-US', {hour12:false}) + " " + msg;
+        document.getElementById('logList').prepend(div);
+    }
+
+    // 启动
+    window.onload = initGame;
+</script>
+
+</body>
+</html>
